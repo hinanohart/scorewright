@@ -1,0 +1,83 @@
+[build-system]
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
+
+[project]
+name = "scorewright"
+version = "0.1.0a1"
+description = "Sandboxed, multi-signal, cross-framework fitness scoring for evolution / RSI / agent loops, with an inline anti-gaming integrity layer."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "scorewright contributors" }]
+keywords = [
+    "evolutionary-computation",
+    "fitness",
+    "scoring",
+    "reward-hacking",
+    "sandbox",
+    "agent",
+    "evaluation",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+# Core is intentionally dependency-free: it uses only the Python standard
+# library (subprocess, resource, statistics, dataclasses, ...). This keeps the
+# fitness layer trivially embeddable in any evolution / agent loop.
+dependencies = []
+
+[project.optional-dependencies]
+# Optional VM-isolated sandbox backend. The v0.1.0a1 backend is an interface
+# stub (import-guarded); full execution lands in v0.2. See sandbox/_microsandbox.py.
+microsandbox = ["microsandbox>=0.1"]
+# Needed only to run the OpenEvolve adapter example / benchmark end to end.
+openevolve = ["openevolve>=0.1"]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.11",
+]
+
+[project.urls]
+Homepage = "https://github.com/hinanohart/scorewright"
+Repository = "https://github.com/hinanohart/scorewright"
+Issues = "https://github.com/hinanohart/scorewright/issues"
+Changelog = "https://github.com/hinanohart/scorewright/blob/main/CHANGELOG.md"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scorewright"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/scorewright", "LICENSE", "NOTICE", "README.md", "CHANGELOG.md"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["B008"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+files = ["src/scorewright"]
+warn_unused_ignores = true
+no_implicit_reexport = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

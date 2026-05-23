@@ -1,0 +1,37 @@
+scorewright
+Copyright 2026 scorewright contributors
+
+This product includes software developed by the scorewright contributors.
+Licensed under the Apache License, Version 2.0 (see LICENSE).
+
+------------------------------------------------------------------------------
+Third-party interoperability and optional dependencies
+------------------------------------------------------------------------------
+
+scorewright's core ships no third-party runtime dependencies. The components
+below are referenced only by optional integrations (extras), examples, and
+benchmarks. scorewright does not vendor their source; it interoperates with
+their public interfaces. Each remains under its own license, held by its
+respective authors.
+
+* OpenEvolve — Apache License 2.0.
+  Target of the `scorewright.adapters.openevolve` adapter (the adapter emits a
+  callable matching OpenEvolve's evaluator contract). Installed via the
+  `openevolve` extra to run the example/benchmark.
+  https://github.com/codelion/openevolve
+
+* microsandbox — Apache License 2.0.
+  Optional VM-isolated sandbox backend (interface stub in v0.1.0a1).
+  Installed via the `microsandbox` extra.
+  https://github.com/microsandbox/microsandbox
+
+The following projects informed scorewright's design and are candidate
+interop targets for later versions; they are not dependencies of v0.1.0a1:
+
+* PrimeIntellect "verifiers" — MIT License (planned adapter, v0.2).
+* SWE-ReX — MIT License.
+* Inspect AI — MIT License.
+
+All trademarks are the property of their respective owners. The names above
+are used only to identify the interoperated projects, per Section 6 of the
+Apache License 2.0.

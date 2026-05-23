@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Secrets — never commit (R11)
+.env
+.env.*
+*.pem
+*.key
+*_token
+*_secret
+secrets.*
+
+# OS / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# Local benchmark output (committed results live under benchmarks/results/ explicitly)
+/tmp_bench/
+
+# Internal autonomous-build state and scratch space (not part of the library)
+.scorewright-progress.json
+experiments/
