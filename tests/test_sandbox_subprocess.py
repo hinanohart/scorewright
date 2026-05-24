@@ -153,4 +153,34 @@ def test_no_fd_leak_when_fork_fails(
 def test_missing_command_reports_exec_failure(sandbox: SubprocessSandbox) -> None:
     r = sandbox.run(["scorewright-no-such-binary-xyz"])
     assert r.returncode == 127
-    assert "exec failed" in r.stderr
+    assert "child setup failed" in r.stderr
+
+
+# -- secure defaults / network isolation -----------------------------------
+
+
+def test_secure_defaults() -> None:
+    # fs isolation and the memory limit must be ON by default; opting out is
+    # explicit. The network is left open by default but available as opt-out.
+    sb = SubprocessSandbox()
+    assert sb.isolate_fs is True
+    assert sb.memory_mb is not None and sb.memory_mb > 0
+    assert sb.allow_network is True
+
+
+def test_no_network_isolates_or_fails_closed() -> None:
+    # With allow_network=False the child must not be able to reach the network.
+    # Either the namespace is created (a connect to a routable address fails on
+    # the empty namespace) or os.unshare is unavailable and the child exits
+    # non-zero — never a successful, networked run.
+    sb = SubprocessSandbox(memory_mb=None, timeout_s=20, allow_network=False)
+    code = (
+        "import socket\n"
+        "s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)\n"
+        "s.settimeout(2)\n"
+        "s.connect(('192.0.2.1', 80))\n"  # TEST-NET-1, unroutable
+        "print('CONNECTED')\n"
+    )
+    r = sb.run([PY, "-c", code])
+    assert "CONNECTED" not in r.stdout
+    assert r.returncode != 0

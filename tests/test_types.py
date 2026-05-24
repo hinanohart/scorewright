@@ -38,6 +38,26 @@ def test_candidate_defaults() -> None:
     assert cand.metadata == {}
 
 
+def test_candidate_accepts_safe_entrypoint() -> None:
+    cand = Candidate(path=Path("/tmp/x"), entrypoint="solution.py")
+    assert cand.entrypoint == "solution.py"
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "../../etc/passwd",
+        "../secret.py",
+        "sub/dir/solution.py",
+        "/etc/passwd",
+        "..",
+    ],
+)
+def test_candidate_rejects_traversal_entrypoint(bad: str) -> None:
+    with pytest.raises(ValueError, match="safe relative filename"):
+        Candidate(path=Path("/tmp/x"), entrypoint=bad)
+
+
 def test_signal_kind_values() -> None:
     assert SignalKind.INTEGRITY.value == "integrity"
     assert {k.value for k in SignalKind} == {

@@ -5,14 +5,22 @@
 * ``resource`` rlimits — address space, CPU seconds, open files;
 * a wall-clock timeout enforced by killing the child's process group;
 * a temporary working directory (an isolated copy of the candidate, by default);
-* an environment **allow-list**, so no ambient secrets leak into the child.
+* an environment **allow-list**, so no ambient secrets leak into the child;
+* best-effort network isolation (a private, loopback-only network namespace)
+  when the platform supports it.
 
 It uses ``os.fork`` + ``os.execvpe`` + ``os.wait4`` rather than ``subprocess``
 so it can read the child's *own* ``rusage`` (accurate peak RSS per call).
 
-This is best-effort OS-level isolation, not a security boundary against
-deliberately malicious code. For untrusted inputs use a VM/container backend
-(see the ``microsandbox`` extra) or run scorewright inside a disposable VM.
+This is best-effort OS-level isolation, not a hard security boundary against
+deliberately malicious code. In particular, network isolation relies on
+unprivileged network namespaces (``os.unshare``), which need a recent Python
+(3.12+) and a kernel/sandbox that permits the call; where unavailable, a child
+configured with ``allow_network=False`` cannot be blocked from opening sockets,
+so the call fails closed (it raises) rather than silently leaving the network
+open. For genuinely untrusted code use a VM/container backend (see the
+``microsandbox`` extra) or run scorewright inside a disposable, network-isolated
+VM.
 """
 
 from __future__ import annotations
@@ -40,7 +48,8 @@ _READ_CHUNK = 65536
 
 
 class SubprocessSandbox:
-    """Run commands under rlimits, a timeout, fs isolation, and an env allow-list.
+    """Run commands under rlimits, a timeout, fs isolation, an env allow-list,
+    and (optionally, best-effort) network isolation.
 
     Args:
         cpu_seconds: ``RLIMIT_CPU`` soft limit. ``None`` disables it.
@@ -56,7 +65,15 @@ class SubprocessSandbox:
             child. Anything not listed (notably API tokens) is withheld.
         isolate_fs: If ``True`` (default), copy the working directory into a
             fresh temp directory for each run so the candidate cannot mutate the
-            original tree. The copy is removed afterwards.
+            original tree. The copy is removed afterwards. Secure by default;
+            pass ``False`` only to explicitly opt out.
+        allow_network: If ``False``, the child is placed in a private network
+            namespace (loopback only) so it cannot reach the network. This is
+            best-effort and **fails closed**: when the platform cannot create the
+            namespace (no ``os.unshare``, or the kernel/sandbox denies it) the
+            child exits non-zero instead of running with the network open. Left
+            ``True`` by default to preserve existing behaviour and portability;
+            set it to ``False`` for untrusted code on a supporting platform.
     """
 
     def __init__(
@@ -68,6 +85,7 @@ class SubprocessSandbox:
         timeout_s: float | None = 30,
         env_allowlist: Sequence[str] = _DEFAULT_ENV_ALLOWLIST,
         isolate_fs: bool = True,
+        allow_network: bool = True,
     ) -> None:
         if sys.platform == "win32":  # pragma: no cover - unsupported platform
             raise RuntimeError(
@@ -80,6 +98,7 @@ class SubprocessSandbox:
         self.timeout_s = timeout_s
         self.env_allowlist = tuple(env_allowlist)
         self.isolate_fs = isolate_fs
+        self.allow_network = allow_network
 
     # -- public API ---------------------------------------------------------
 
@@ -128,6 +147,22 @@ class SubprocessSandbox:
 
         workdir = cwd if cwd is not None else Path.cwd()
         return workdir, (lambda: None)
+
+    def _isolate_network(self) -> None:  # pragma: no cover - runs in child process
+        # Best-effort, fail-closed network isolation. Only acts when the caller
+        # opted out of network access; otherwise the child keeps host network.
+        if self.allow_network:
+            return
+        unshare = getattr(os, "unshare", None)
+        clone_newnet = getattr(os, "CLONE_NEWNET", None)
+        if unshare is None or clone_newnet is None:
+            # No way to drop the network on this platform/Python. Refuse to run
+            # with the network silently open when isolation was requested.
+            raise OSError(
+                "network isolation requested (allow_network=False) but os.unshare"
+                " is unavailable on this platform; refusing to run with network"
+            )
+        unshare(clone_newnet)
 
     def _apply_limits(self) -> None:  # pragma: no cover - runs in child process
         if _resource is None:
@@ -216,14 +251,16 @@ class SubprocessSandbox:
             for fd in (out_r, out_w, err_r, err_w, in_r, in_w):
                 _close_quiet(fd)
             os.chdir(workdir)
+            self._isolate_network()
             self._apply_limits()
             os.execvpe(command[0], command, env)
-        except BaseException:
-            # exec failed (e.g. command not found): surface a short reason on the
+        except BaseException as exc:
+            # Child setup or exec failed (e.g. command not found, or network
+            # isolation could not be applied): surface a short reason on the
             # child's stderr (fd 2 is already dup2'd to the pipe) before exiting,
             # so the parent doesn't get a silent exit 127.
             with contextlib.suppress(OSError):
-                os.write(2, f"scorewright: exec failed for {command[0]!r}\n".encode())
+                os.write(2, f"scorewright: child setup failed for {command[0]!r}: {exc}\n".encode())
             os._exit(127)
 
     def _pump(
