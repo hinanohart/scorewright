@@ -69,7 +69,9 @@ def _gather_code(candidate: Candidate) -> str:
             files.append(entry)
     if not files:
         for pattern in _DEFAULT_SOURCE_GLOBS:
-            files = sorted(candidate.path.glob(pattern))
+            files = [
+                f for f in sorted(candidate.path.glob(pattern)) if _is_within(f, candidate.path)
+            ]
             if files:
                 break
     parts: list[str] = []
