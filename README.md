@@ -16,7 +16,7 @@
 Every evolution / self-improvement / agent loop needs a *fitness function*: a
 way to turn "this candidate program" into numbers the search can climb. In
 practice each project re-implements its own `evaluate.py` — re-deriving how to
-run untrusted code safely, how to time it, how to price its token usage, how to
+sandbox candidate code, how to time it, how to price its token usage, how to
 ask an LLM judge for a score, and (almost always skipped) how to tell whether
 the candidate is **gaming the scorer** rather than solving the task.
 
@@ -26,7 +26,11 @@ scorewright is the reusable layer for that. It is:
   separate, composable scorers, each emitting *measured* values only.
 - **Sandboxed** — candidate code runs under a subprocess sandbox with
   CPU/memory/file-descriptor limits, wall-clock timeout, a temp working
-  directory, and an environment allow-list (no ambient secrets leak in).
+  directory, and an environment allow-list (no ambient secrets leak in), plus
+  optional best-effort network isolation. This is OS-level hardening, **not a
+  hard security boundary**: it raises the bar against accidental damage and
+  resource abuse, but for genuinely untrusted code use a VM/container backend
+  (the `microsandbox` extra) or a disposable, network-isolated VM.
 - **Cross-framework** — adapters convert scorewright's intermediate
   representation into the shape a host framework expects. v0.1.0a1 ships an
   **OpenEvolve** adapter; a `verifiers` adapter is planned for v0.2.
@@ -61,6 +65,8 @@ from scorewright.sandbox import SubprocessSandbox
 from scorewright.scorers import CorrectnessScorer, PerfScorer
 
 sandbox = SubprocessSandbox(cpu_seconds=10, memory_mb=512, timeout_s=30)
+# fs isolation and the memory limit are on by default; pass allow_network=False
+# for best-effort network isolation (requires Python 3.12+ / a permitting kernel).
 
 scorer = CompositeScorer([
     CorrectnessScorer(sandbox, test_command=["python", "-m", "pytest", "-q"]),

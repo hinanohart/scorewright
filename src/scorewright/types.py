@@ -83,6 +83,19 @@ class ScoreResult:
         return {s.name: s.value for s in self.signals}
 
 
+def _is_safe_entrypoint(entrypoint: str) -> bool:
+    """Return ``True`` iff ``entrypoint`` is a single safe relative filename.
+
+    Safe means exactly one path component that is not ``.`` or ``..`` and not
+    absolute, so joining it onto a candidate's ``path`` can never escape that
+    directory.
+    """
+    parts = Path(entrypoint).parts
+    return (
+        len(parts) == 1 and parts[0] not in ("", ".", "..") and not Path(entrypoint).is_absolute()
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Candidate:
     """A program to be scored.
@@ -92,16 +105,33 @@ class Candidate:
             execute code do so within (an isolated copy of) this directory.
         entrypoint: Optional default entrypoint (e.g. ``"solution.py"``).
             Scorers may use it to build a command when none is given explicitly.
+            Must be a single safe relative filename inside ``path`` — no path
+            separators, no ``..`` components, and not absolute — so an
+            attacker-controlled candidate cannot make a scorer read files outside
+            its working directory.
         metadata: Free-form, read-only metadata. Conventionally carries token
             usage for :class:`~scorewright.scorers.cost.CostScorer` under
             ``metadata["usage"] = {"model": str, "input_tokens": int,
             "output_tokens": int}`` and any judge output for the anti-gaming
             structured-output anchor.
+
+    Raises:
+        ValueError: If ``entrypoint`` is not a safe relative filename.
     """
 
     path: Path
     entrypoint: str | None = None
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.entrypoint is not None and not _is_safe_entrypoint(self.entrypoint):
+            # Reject anything that is not a bare filename: path separators,
+            # parent references (``..``), and absolute paths all fail this check,
+            # which blocks traversal out of ``path`` (e.g. ``"../../etc/passwd"``).
+            raise ValueError(
+                f"entrypoint must be a safe relative filename inside the candidate "
+                f"directory (no path separators or '..'), got {self.entrypoint!r}"
+            )
 
 
 __all__ = ["Candidate", "ScoreResult", "Signal", "SignalKind"]

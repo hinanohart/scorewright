@@ -50,11 +50,22 @@ def parse_score(text: str, scale_max: float) -> float | None:
     return max(0.0, min(scale_max, value))
 
 
+def _is_within(path: Path, root: Path) -> bool:
+    """Return ``True`` iff ``path`` resolves to a location inside ``root``."""
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
 def _gather_code(candidate: Candidate) -> str:
     files: list[Path] = []
     if candidate.entrypoint:
         entry = candidate.path / candidate.entrypoint
-        if entry.is_file():
+        # Defence in depth: Candidate validates entrypoint, but never feed an
+        # out-of-tree file into a prompt sent to an external LLM regardless.
+        if _is_within(entry, candidate.path) and entry.is_file():
             files.append(entry)
     if not files:
         for pattern in _DEFAULT_SOURCE_GLOBS:
