@@ -5,26 +5,32 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 from ..sandbox.base import Sandbox
 from ..types import Candidate, ScoreResult, Signal, SignalKind
 
 _DEFAULT_TEST_COMMAND = ("python", "-m", "pytest", "-q", "--tb=no")
 
-# pytest summary fragments, e.g. "3 passed", "1 failed", "2 errors", "5 skipped".
-_COUNT_RE = re.compile(r"(\d+)\s+(passed|failed|error|errors|skipped)")
+# pytest prints exactly one outcome summary line, e.g.
+#   "===== 1 failed, 2 passed in 0.34s ====="
+# It always ends with " in <duration>s". We parse counts only from such a line
+# (taking the last one if several match), so incidental prose elsewhere in
+# stdout/stderr is not mistaken for the summary. This alone does not defeat a
+# candidate that *deliberately* prints a fake summary line; CorrectnessScorer
+# reconciles the parsed counts against pytest's (unforgeable) exit code for that.
+_SUMMARY_LINE_RE = re.compile(r"^.*?\bin\s+[\d.]+\s*s\b.*$", re.MULTILINE)
+_COUNT_RE = re.compile(r"(\d+)\s+(passed|failed|errors?|skipped)")
 
 
+@dataclass(frozen=True, slots=True)
 class PytestCounts:
     """Parsed pytest outcome counts."""
 
-    __slots__ = ("errors", "failed", "passed", "skipped")
-
-    def __init__(self, passed: int, failed: int, errors: int, skipped: int) -> None:
-        self.passed = passed
-        self.failed = failed
-        self.errors = errors
-        self.skipped = skipped
+    passed: int
+    failed: int
+    errors: int
+    skipped: int
 
     @property
     def graded(self) -> int:
@@ -45,27 +51,33 @@ class PytestCounts:
 
 
 def parse_pytest_counts(output: str) -> PytestCounts | None:
-    """Parse pytest pass/fail/error/skip counts from its output.
+    """Parse pytest pass/fail/error/skip counts from its summary line.
 
-    Returns ``None`` if no recognizable counts are present. ``"error"`` and
-    ``"errors"`` are summed together.
+    Only the pytest summary line (the last line ending in ``in <duration>s``
+    that carries outcome counts) is parsed, so incidental prose elsewhere in the
+    output is not mistaken for the summary. ``"error"`` and ``"errors"`` are
+    summed together. Returns ``None`` if no summary is found. Reconciling a
+    deliberately faked summary is the caller's job (see :class:`CorrectnessScorer`,
+    which cross-checks the exit code).
     """
-    found = False
+    summary: str | None = None
+    for line in _SUMMARY_LINE_RE.finditer(output):
+        if _COUNT_RE.search(line.group(0)):
+            summary = line.group(0)  # keep the last count-bearing summary line
+    if summary is None:
+        return None
     passed = failed = errors = skipped = 0
-    for match in _COUNT_RE.finditer(output):
-        found = True
+    for match in _COUNT_RE.finditer(summary):
         n = int(match.group(1))
         label = match.group(2)
         if label == "passed":
             passed += n
         elif label == "failed":
             failed += n
-        elif label in ("error", "errors"):
+        elif label.startswith("error"):
             errors += n
-        elif label == "skipped":
+        else:  # skipped
             skipped += n
-    if not found:
-        return None
     return PytestCounts(passed, failed, errors, skipped)
 
 
@@ -77,9 +89,12 @@ class CorrectnessScorer:
     """Runs a test command and reports the fraction of tests that pass.
 
     The pass-rate is parsed from pytest's summary counts (skipped tests are
-    excluded from the denominator). If counts cannot be parsed, the scorer falls
-    back to the process exit code (0 -> 1.0, otherwise 0.0) and records the
-    fallback in ``raw``.
+    excluded from the denominator) and **reconciled against pytest's exit code**,
+    which the candidate cannot forge: exit 0 means every collected test passed
+    (pass-rate 1.0 regardless of any printed counts), and a failing exit whose
+    counts do not corroborate the failure is treated as 0.0 (fail closed). A
+    candidate that prints fake counts — even a fake summary at process exit —
+    therefore cannot inflate the pass-rate the integrity layer trusts.
 
     A result is ``ok=False`` (no fabricated value) when the run times out, when
     no tests are collected (pytest exit code 5), or when the runner itself fails
@@ -121,20 +136,33 @@ class CorrectnessScorer:
             return ScoreResult(self.name, (), False, "test run timed out", duration)
         if exec_result.returncode == 5:
             return ScoreResult(self.name, (), False, "no tests collected", duration)
+        if exec_result.returncode not in (0, 1):
+            return ScoreResult(
+                self.name,
+                (),
+                False,
+                f"test runner failed (exit {exec_result.returncode})",
+                duration,
+            )
 
-        pass_rate: float | None = counts.pass_rate if counts else None
-        if pass_rate is None:
-            if exec_result.returncode in (0, 1):
-                pass_rate = 1.0 if exec_result.returncode == 0 else 0.0
+        # pytest's exit code is authoritative and cannot be forged by the
+        # candidate's own output: 0 => every collected test passed; 1 => at least
+        # one failed. We reconcile the parsed counts against it, so a candidate
+        # that prints a fake summary — even at process exit, after pytest's real
+        # one — cannot inflate the pass-rate.
+        pass_rate: float
+        if exec_result.returncode == 0:
+            pass_rate = 1.0
+            if counts is None:
                 raw["fallback"] = "exit-code (no parseable counts)"
-            else:
-                return ScoreResult(
-                    self.name,
-                    (),
-                    False,
-                    f"test runner failed (exit {exec_result.returncode})",
-                    duration,
-                )
+        elif counts is not None and (counts.failed + counts.errors) > 0:
+            rate = counts.pass_rate
+            pass_rate = rate if rate is not None else 0.0
+        else:
+            # Exit code reports a failure the counts don't corroborate (missing
+            # or tampered): fail closed rather than trust an inflated pass-rate.
+            pass_rate = 0.0
+            raw["fallback"] = "exit-code (counts missing or contradict failing exit)"
 
         signal = Signal(
             kind=SignalKind.CORRECTNESS,

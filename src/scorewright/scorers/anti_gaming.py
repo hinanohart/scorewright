@@ -42,6 +42,15 @@ class AntiGamingScorer:
     Each check is optional and runs only if its inputs are supplied. At least
     one check must be runnable, otherwise the result is ``ok=False``.
 
+    Signals emitted (besides the always-present boolean ``integrity_flagged``):
+    ``integrity_heldout_gap`` (if both test commands are given),
+    ``integrity_perf_cv`` and ``integrity_perf_cache_ratio`` (if ``perf_command``
+    is given), and ``integrity_anchor_ok`` (if a judge output is given). These
+    are *raw* integrity measurements; when wired through the OpenEvolve adapter
+    they appear in the metrics dict alongside the other scorers' signals, so an
+    ``aggregate`` function should select the keys it wants explicitly rather than
+    averaging everything.
+
     Args:
         sandbox: Sandbox used to execute test / perf commands.
         visible_test_command: Test command for the graded (visible) set.
@@ -137,10 +146,16 @@ class AntiGamingScorer:
         result = self.sandbox.run(command, cwd=candidate.path, timeout_s=self.timeout_s)
         if result.timed_out or result.returncode not in (0, 1):
             return None
+        # pytest's exit code is authoritative (the candidate cannot forge it):
+        # 0 => all passed. On a failing exit we reconcile the parsed counts, so a
+        # faked "all passed" summary cannot hide a real held-out failure and
+        # defeat the divergence check.
+        if result.returncode == 0:
+            return 1.0
         counts = parse_pytest_counts(result.stdout + "\n" + result.stderr)
-        if counts is None:
-            return 1.0 if result.returncode == 0 else 0.0
-        return counts.pass_rate
+        if counts is not None and (counts.failed + counts.errors) > 0:
+            return counts.pass_rate
+        return 0.0
 
     def _check_heldout(
         self, candidate: Candidate, signals: list[Signal], reasons: list[str]
@@ -179,6 +194,9 @@ class AntiGamingScorer:
             times.append(result.duration_s)
 
         mean = statistics.fmean(times)
+        # Population stdev (not sample): the repeats *are* the complete set of
+        # observations we judge this candidate on, so we describe their actual
+        # dispersion rather than infer a wider population.
         cv = statistics.pstdev(times) / mean if mean > 0 else 0.0
         if cv > self.perf_cv_threshold:
             reasons.append(
@@ -197,24 +215,27 @@ class AntiGamingScorer:
         )
 
         rest = times[1:]
-        median_rest = statistics.median(rest)
-        if median_rest > 0:
-            cache_ratio = times[0] / median_rest
-            if cache_ratio > self.cache_ratio_threshold:
-                reasons.append(
-                    f"perf cache anomaly: first_run/median_rest={cache_ratio:.2f} "
-                    f"> {self.cache_ratio_threshold:.2f} (possible caching/state leak)"
-                )
-            signals.append(
-                Signal(
-                    kind=SignalKind.INTEGRITY,
-                    name="integrity_perf_cache_ratio",
-                    value=cache_ratio,
-                    unit="ratio",
-                    higher_is_better=False,
-                    raw={"first_s": times[0], "median_rest_s": median_rest},
-                )
+        median_rest = statistics.median(rest) if rest else 0.0
+        # Sub-resolution timings (median_rest == 0) carry no cache signal; emit a
+        # neutral 1.0 so the *set* of integrity signals stays deterministic
+        # regardless of timing. (For perf_repeats == 2 the ratio rests on a single
+        # "rest" sample and is noisy; perf_repeats >= 3 is recommended.)
+        cache_ratio = times[0] / median_rest if median_rest > 0 else 1.0
+        if cache_ratio > self.cache_ratio_threshold:
+            reasons.append(
+                f"perf cache anomaly: first_run/median_rest={cache_ratio:.2f} "
+                f"> {self.cache_ratio_threshold:.2f} (possible caching/state leak)"
             )
+        signals.append(
+            Signal(
+                kind=SignalKind.INTEGRITY,
+                name="integrity_perf_cache_ratio",
+                value=cache_ratio,
+                unit="ratio",
+                higher_is_better=False,
+                raw={"first_s": times[0], "median_rest_s": median_rest},
+            )
+        )
 
     def _check_anchor(self, judge_output: str, signals: list[Signal], reasons: list[str]) -> None:
         matches = _SCORE_RE.findall(judge_output)

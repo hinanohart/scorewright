@@ -14,7 +14,7 @@ from __future__ import annotations
 from .scorer import CompositeScorer, Scorer, collect_values
 from .types import Candidate, ScoreResult, Signal, SignalKind
 
-__version__ = "0.1.0a1"
+__version__ = "0.1.0a2"
 
 __all__ = [
     "Candidate",

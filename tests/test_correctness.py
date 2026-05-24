@@ -45,6 +45,24 @@ def test_parse_pytest_counts_none_when_unparseable() -> None:
     assert parse_pytest_counts("no recognizable summary here") is None
 
 
+def test_parse_ignores_non_summary_prose() -> None:
+    # A stray "7 passed" in prose (no "in <duration>s") must not be parsed as a
+    # summary; only the genuine summary line is used.
+    out = "note: 7 passed earlier today\n=== 1 passed in 0.01s ===\n"
+    counts = parse_pytest_counts(out)
+    assert counts is not None
+    assert counts.passed == 1
+
+
+def test_parse_uses_last_summary_when_candidate_fakes_one() -> None:
+    # A gaming candidate prints a fake summary first; pytest's real summary is
+    # last, so the last count-bearing summary line wins.
+    out = "999 passed in 0.001s\n.\n1 failed, 1 passed in 0.02s\n"
+    counts = parse_pytest_counts(out)
+    assert counts is not None
+    assert (counts.passed, counts.failed) == (1, 1)
+
+
 def test_all_tests_pass(sandbox: SubprocessSandbox, tmp_path: Path) -> None:
     cand = _write(tmp_path, "def test_a():\n    assert 1 + 1 == 2\n")
     result = CorrectnessScorer(sandbox, test_command=TEST_CMD).score(cand)
@@ -65,3 +83,18 @@ def test_no_tests_collected_is_not_ok(sandbox: SubprocessSandbox, tmp_path: Path
     result = CorrectnessScorer(sandbox, test_command=TEST_CMD).score(Candidate(path=tmp_path))
     assert result.ok is False
     assert result.error is not None
+
+
+def test_exit_code_overrides_trailing_fake_summary(
+    sandbox: SubprocessSandbox, tmp_path: Path
+) -> None:
+    # A failing test whose process prints a fake "all passed" summary at exit
+    # (after pytest's real summary). pytest's exit code (1) is authoritative and
+    # cannot be forged, so the pass-rate must be 0.0, not inflated to 1.0.
+    (tmp_path / "conftest.py").write_text(
+        "import atexit, os\natexit.register(lambda: os.write(1, b'999 passed in 0.00s\\n'))\n"
+    )
+    (tmp_path / "test_candidate.py").write_text("def test_fail():\n    assert False\n")
+    result = CorrectnessScorer(sandbox, test_command=TEST_CMD).score(Candidate(path=tmp_path))
+    assert result.ok is True
+    assert result.signal("correctness_pass_rate").value == 0.0

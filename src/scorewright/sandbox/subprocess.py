@@ -137,6 +137,8 @@ class SubprocessSandbox:
             _resource.setrlimit(_resource.RLIMIT_AS, (limit, limit))
         if self.cpu_seconds is not None:
             cpu = int(self.cpu_seconds)
+            # Soft limit raises SIGXCPU; the +1s hard limit guarantees a SIGKILL
+            # if the child catches or ignores SIGXCPU.
             _resource.setrlimit(_resource.RLIMIT_CPU, (cpu, cpu + 1))
         if self.open_files is not None:
             _resource.setrlimit(_resource.RLIMIT_NOFILE, (self.open_files, self.open_files))
@@ -149,23 +151,41 @@ class SubprocessSandbox:
         env: dict[str, str],
         timeout: float | None,
     ) -> ExecResult:
-        out_r, out_w = os.pipe()
-        err_r, err_w = os.pipe()
-        in_r, in_w = os.pipe()
-
+        out_r = out_w = err_r = err_w = in_r = in_w = -1
+        pid = -1
         start = time.perf_counter()
-        pid = os.fork()
-        if pid == 0:  # pragma: no cover - child process, exits via _exit
-            self._child(command, workdir, env, (out_r, out_w, err_r, err_w, in_r, in_w))
-
-        # parent
-        for fd in (out_w, err_w, in_r):
-            os.close(fd)
         try:
-            stdout_b, stderr_b, timed_out = self._pump(pid, out_r, err_r, in_w, stdin, timeout)
-        finally:
-            for fd in (out_r, err_r, in_w):
-                _close_quiet(fd)
+            out_r, out_w = os.pipe()
+            err_r, err_w = os.pipe()
+            in_r, in_w = os.pipe()
+
+            pid = os.fork()
+            if pid == 0:  # pragma: no cover - child process, exits via _exit
+                self._child(command, workdir, env, (out_r, out_w, err_r, err_w, in_r, in_w))
+
+            # parent: close the child's ends so reads observe EOF when it exits.
+            for fd in (out_w, err_w, in_r):
+                os.close(fd)
+            out_w = err_w = in_r = -1
+
+            try:
+                stdout_b, stderr_b, timed_out = self._pump(pid, out_r, err_r, in_w, stdin, timeout)
+            finally:
+                for fd in (out_r, err_r, in_w):
+                    _close_quiet(fd)
+                out_r = err_r = in_w = -1
+        except BaseException:
+            # os.fork() may have failed (no child) or _pump may have raised after
+            # the fork. Bounded, leak-free execution is the whole contract, so
+            # never leak a pipe fd and never leave the child running or unreaped.
+            for fd in (out_r, out_w, err_r, err_w, in_r, in_w):
+                if fd >= 0:
+                    _close_quiet(fd)
+            if pid > 0:
+                self._kill_group(pid)
+                with contextlib.suppress(ChildProcessError, OSError):
+                    os.waitpid(pid, 0)
+            raise
 
         _pid, status, rusage = os.wait4(pid, 0)
         duration = time.perf_counter() - start
@@ -198,7 +218,12 @@ class SubprocessSandbox:
             os.chdir(workdir)
             self._apply_limits()
             os.execvpe(command[0], command, env)
-        except Exception:
+        except BaseException:
+            # exec failed (e.g. command not found): surface a short reason on the
+            # child's stderr (fd 2 is already dup2'd to the pipe) before exiting,
+            # so the parent doesn't get a silent exit 127.
+            with contextlib.suppress(OSError):
+                os.write(2, f"scorewright: exec failed for {command[0]!r}\n".encode())
             os._exit(127)
 
     def _pump(
@@ -251,22 +276,54 @@ class SubprocessSandbox:
     @staticmethod
     def _kill_group(pid: int) -> None:
         try:
-            os.killpg(os.getpgid(pid), signal.SIGKILL)
+            pgid = os.getpgid(pid)
+        except ProcessLookupError:  # child already gone
+            return
+        # Never SIGKILL our *own* process group. If cleanup runs immediately
+        # after the fork (e.g. on the exception path) the child may not have
+        # called setsid yet, so its pgid is still the parent's — killing that
+        # group would take down scorewright itself. Fall back to the child pid.
+        if pgid == os.getpgrp():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, signal.SIGKILL)
+            return
+        try:
+            os.killpg(pgid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):  # pragma: no cover
             with contextlib.suppress(ProcessLookupError):
                 os.kill(pid, signal.SIGKILL)
 
     @staticmethod
-    def _drain(open_fds: set[int], chunks: dict[int, list[bytes]]) -> None:
-        for fd in list(open_fds):
-            try:
-                while True:
+    def _drain(open_fds: set[int], chunks: dict[int, list[bytes]], budget_s: float = 2.0) -> None:
+        """Read output buffered before the kill, bounded by ``budget_s``.
+
+        A grandchild that escaped the process group (e.g. by calling ``setsid``
+        itself) can keep the pipe write-end open after the direct child is
+        killed, so an unbounded read here would let it stall the parent forever.
+        That OS-level escape is outside the sandbox's isolation guarantee, but
+        the parent's wall-clock bound must still hold — hence the time budget.
+        """
+        if not open_fds:
+            return
+        remaining = set(open_fds)
+        deadline = time.monotonic() + budget_s
+        while remaining:
+            time_left = deadline - time.monotonic()
+            if time_left <= 0:
+                break
+            ready, _, _ = select.select(list(remaining), [], [], time_left)
+            if not ready:
+                break
+            for fd in ready:
+                try:
                     data = os.read(fd, _READ_CHUNK)
-                    if not data:
-                        break
+                except OSError:
+                    remaining.discard(fd)
+                    continue
+                if data:
                     chunks[fd].append(data)
-            except OSError:
-                pass
+                else:
+                    remaining.discard(fd)
 
 
 def _close_quiet(fd: int) -> None:

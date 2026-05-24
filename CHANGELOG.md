@@ -5,6 +5,36 @@ All notable changes to this project are documented here. The format is based on
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 (pre-release suffixes per PEP 440).
 
+## [0.1.0a2] — 2026-05-24
+
+Robustness and correctness fixes from a post-release adversarial audit. No
+public API changes.
+
+### Fixed
+- `SubprocessSandbox`: the child process is now **unconditionally reaped** even
+  if output pumping raises, so a failure can no longer leave an orphaned/zombie
+  child holding resource limits.
+- `SubprocessSandbox`: the post-timeout output drain is **time-bounded**, so a
+  grandchild that escapes the process group (e.g. by calling `setsid` itself)
+  and holds a pipe open can no longer make the parent block past its wall-clock
+  timeout.
+- `SubprocessSandbox`: pipe file descriptors are cleaned up if `os.fork()`
+  fails, preventing an fd leak under load.
+- `CorrectnessScorer` / `AntiGamingScorer`: pytest pass-rates are parsed only
+  from the genuine summary line (anchored, last-match) **and reconciled against
+  pytest's exit code**, which a candidate cannot forge. A candidate that prints
+  fake counts — even a fake summary at process exit — can therefore no longer
+  report success while pytest reports failure, so it cannot inflate the
+  pass-rate the integrity layer trusts (the held-out divergence check).
+- `AntiGamingScorer`: the `integrity_perf_cache_ratio` signal is always emitted
+  (neutral `1.0` when timings are sub-resolution), so the set of integrity
+  signals is deterministic.
+
+### Changed
+- `SubprocessSandbox`: a failed `exec` now writes a short diagnostic to the
+  child's stderr before exiting 127.
+- The benchmark harness is now type-checked under mypy strict (and ruff) in CI.
+
 ## [0.1.0a1] — 2026-05-24
 
 Initial pre-alpha release.

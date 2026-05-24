@@ -26,6 +26,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypedDict
 
 from scorewright import Candidate
 from scorewright._pricing import EXAMPLE_PRICING, EXAMPLE_PRICING_DATE
@@ -37,6 +38,25 @@ from scorewright.scorers import (
     PerfScorer,
     is_flagged,
 )
+from scorewright.types import ScoreResult
+
+
+class Row(TypedDict):
+    task: str
+    kind: str
+    is_gaming: bool
+    flagged: bool
+    correctness_pass_rate: float | None
+    perf_wall_time_s: float | None
+    cost_usd: float | None
+    integrity_reasons: list[str]
+
+
+class Report(TypedDict):
+    environment: dict[str, object]
+    summary: dict[str, object]
+    rows: list[Row]
+
 
 PY = sys.executable
 MARKER = Path(tempfile.gettempdir()) / "scorewright_bench_perfcache.marker"
@@ -222,13 +242,13 @@ def _environment() -> dict[str, object]:
     }
 
 
-def run() -> dict[str, object]:
+def run() -> Report:
     # A non-isolating sandbox is required for the perf-cache candidate so its
     # marker (kept outside the working dir) persists across repeated runs.
     sandbox = SubprocessSandbox(memory_mb=None, cpu_seconds=30, timeout_s=120, isolate_fs=False)
     cost_scorer = CostScorer(EXAMPLE_PRICING)
 
-    rows: list[dict[str, object]] = []
+    rows: list[Row] = []
     with tempfile.TemporaryDirectory(prefix="scorewright-bench-") as tmp:
         root = Path(tmp)
         for task in TASKS:
@@ -258,16 +278,16 @@ def run() -> dict[str, object]:
 
             flagged = is_flagged(integrity)
             rows.append(
-                {
-                    "task": task.name,
-                    "kind": task.kind,
-                    "is_gaming": task.kind.startswith("gaming"),
-                    "flagged": flagged,
-                    "correctness_pass_rate": _val(correctness, "correctness_pass_rate"),
-                    "perf_wall_time_s": _val(perf, "perf_wall_time_s"),
-                    "cost_usd": _val(cost, "cost_usd"),
-                    "integrity_reasons": _reasons(integrity),
-                }
+                Row(
+                    task=task.name,
+                    kind=task.kind,
+                    is_gaming=task.kind.startswith("gaming"),
+                    flagged=flagged,
+                    correctness_pass_rate=_val(correctness, "correctness_pass_rate"),
+                    perf_wall_time_s=_val(perf, "perf_wall_time_s"),
+                    cost_usd=_val(cost, "cost_usd"),
+                    integrity_reasons=_reasons(integrity),
+                )
             )
     if MARKER.exists():
         MARKER.unlink()
@@ -276,7 +296,7 @@ def run() -> dict[str, object]:
     honest = [r for r in rows if not r["is_gaming"]]
     caught = sum(1 for r in gaming if r["flagged"])
     false_pos = sum(1 for r in honest if r["flagged"])
-    summary = {
+    summary: dict[str, object] = {
         "n_tasks": len(rows),
         "n_gaming": len(gaming),
         "n_honest": len(honest),
@@ -291,13 +311,13 @@ def run() -> dict[str, object]:
     return {"environment": _environment(), "summary": summary, "rows": rows}
 
 
-def _val(result: object, name: str) -> float | None:
-    sig = result.signal(name)  # type: ignore[attr-defined]
+def _val(result: ScoreResult, name: str) -> float | None:
+    sig = result.signal(name)
     return sig.value if sig is not None else None
 
 
-def _reasons(result: object) -> list[str]:
-    sig = result.signal("integrity_flagged")  # type: ignore[attr-defined]
+def _reasons(result: ScoreResult) -> list[str]:
+    sig = result.signal("integrity_flagged")
     if sig is None or not isinstance(sig.raw, dict):
         return []
     reasons = sig.raw.get("reasons", [])
@@ -314,9 +334,10 @@ def main() -> int:
     args = parser.parse_args()
 
     report = run()
-    args.out.mkdir(parents=True, exist_ok=True)
-    date = report["environment"]["date_utc"]  # type: ignore[index]
-    out_path = args.out / f"result_{date}.json"
+    out_dir: Path = args.out
+    out_dir.mkdir(parents=True, exist_ok=True)
+    date = report["environment"]["date_utc"]
+    out_path = out_dir / f"result_{date}.json"
     out_path.write_text(json.dumps(report, indent=2) + "\n")
 
     summary = report["summary"]

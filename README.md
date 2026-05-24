@@ -122,7 +122,7 @@ integrity layer flags). Each run is stamped with its environment
 (`os, machine, python, date, scorewright version, perf_repeats`) and written to
 `benchmarks/results/`.
 
-Measured on `Linux-6.6 WSL2 x86_64`, Python 3.12.3, 2026-05-23 (UTC),
+Measured on `Linux-6.6 WSL2 x86_64`, Python 3.12.3, 2026-05-24 (UTC),
 5-task suite, `perf_repeats=4` — reproduce with `python benchmarks/run_bench.py`
 (raw output in [`benchmarks/results/`](benchmarks/results/)):
 
@@ -131,7 +131,7 @@ Measured on `Linux-6.6 WSL2 x86_64`, Python 3.12.3, 2026-05-23 (UTC),
 | Anti-gaming **caught-rate** | **1.0** (3/3) | held-out & judge-injection catches are exact; the perf-variance catch fires on a large, machine-robust timing margin (CV 0.92 vs 0.5 threshold) |
 | Anti-gaming **false-positive-rate** | **0.0** (0/2) | honest candidates not flagged |
 | Correctness (honest pass-rate) | **1.0** | deterministic |
-| Perf (median wall-time, honest) | ~0.016 s | machine dependent; compare only within the same environment |
+| Perf (median wall-time, honest) | ~0.022 s | machine dependent; compare only within the same environment |
 | Cost (per honest candidate) | $0.00024 | computed from recorded token usage × the **example** pricing snapshot (not authoritative) |
 
 > The caught-rate is over a small, hand-built suite of *known* strategies — a
