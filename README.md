@@ -173,6 +173,12 @@ never invents a value.
 from this repo via a thin in-process shim and content-hashes them into a
 local audit store:
 
+> memcanon is not on PyPI yet. Install it from the tagged release:
+>
+> ```bash
+> pip install "git+https://github.com/hinanohart/memcanon@v0.2.0a2"
+> ```
+
 ```python
 from memcanon.emit import emit
 from memcanon.store.local import LocalStore
