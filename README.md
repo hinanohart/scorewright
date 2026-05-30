@@ -3,7 +3,7 @@
 **Sandboxed, multi-signal, cross-framework fitness scoring for evolution / RSI / agent loops — with an inline anti-gaming integrity layer.**
 
 [![CI](https://github.com/hinanohart/scorewright/actions/workflows/ci.yml/badge.svg)](https://github.com/hinanohart/scorewright/actions/workflows/ci.yml)
-[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 
 > Status: **pre-alpha (v0.1.0a1)**. APIs may change. Core is dependency-free
@@ -194,4 +194,4 @@ conformity assessment).
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+MIT. See [LICENSE](LICENSE).

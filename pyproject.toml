@@ -8,8 +8,8 @@ version = "0.1.0a2"
 description = "Sandboxed, multi-signal, cross-framework fitness scoring for evolution / RSI / agent loops, with an inline anti-gaming integrity layer."
 readme = "README.md"
 requires-python = ">=3.10"
-license = "Apache-2.0"
-license-files = ["LICENSE", "NOTICE"]
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "scorewright contributors" }]
 keywords = [
     "evolutionary-computation",
@@ -24,7 +24,7 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: Apache Software License",
+    "License :: OSI Approved :: MIT License",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
@@ -60,7 +60,7 @@ Changelog = "https://github.com/hinanohart/scorewright/blob/main/CHANGELOG.md"
 packages = ["src/scorewright"]
 
 [tool.hatch.build.targets.sdist]
-include = ["src/scorewright", "LICENSE", "NOTICE", "README.md", "CHANGELOG.md"]
+include = ["src/scorewright", "LICENSE", "README.md", "CHANGELOG.md"]
 
 [tool.ruff]
 line-length = 100
